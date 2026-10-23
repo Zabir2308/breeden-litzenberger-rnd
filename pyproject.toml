@@ -1,0 +1,10 @@
+[project]
+name = "breeden-litzenberger-rnd"
+version = "0.1.0"
+description = "Implied Risk-Neutral Distribution (Breeden-Litzenberger) & Tail Risk Engine"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"

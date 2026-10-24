@@ -171,9 +171,11 @@ def fetch_raw_option_chain(
                     calls_df = chain.calls.copy()
                     puts_df = chain.puts.copy()
 
-                    # Verify that non-zero bids exist (market hours vs weekend zero-bid anomaly)
-                    valid_bids = (calls_df["bid"] > 0).sum() + (puts_df["bid"] > 0).sum()
-                    if valid_bids >= 20:
+                    # Verify that enough liquid two-sided quotes exist (during off-hours/nights,
+                    # Yahoo Finance often zeroes out bids/asks or leaves wide stale quotes)
+                    c_valid = calls_df[(calls_df["bid"] > 0.05) & (calls_df["ask"] > calls_df["bid"]) & ((calls_df["ask"] - calls_df["bid"]) / calls_df["ask"] < 0.25)]
+                    p_valid = puts_df[(puts_df["bid"] > 0.05) & (puts_df["ask"] > puts_df["bid"]) & ((puts_df["ask"] - puts_df["bid"]) / puts_df["ask"] < 0.25)]
+                    if len(c_valid) >= 25 and len(p_valid) >= 25:
                         return calls_df, puts_df, spot, chosen_exp, T, "yfinance_live"
         except Exception:
             pass
@@ -303,6 +305,19 @@ def clean_and_blend_otm_chain(
     liquid["time_value"] = liquid["call_equiv_price"] - intrinsic
     liquid = liquid[liquid["time_value"] > 0.005].copy().reset_index(drop=True)
 
+    # If live market quotes are after-hours/stale and leave too few valid strikes,
+    # fall back cleanly to the calibrated snapshot so the pipeline never crashes
+    if len(liquid) < 30 and use_live:
+        return clean_and_blend_otm_chain(
+            ticker=ticker,
+            target_dte=target_dte,
+            risk_free_rate=risk_free_rate,
+            max_rel_spread=max_rel_spread,
+            moneyness_bounds=moneyness_bounds,
+            use_live=False,
+            save_csv_path=save_csv_path,
+        )
+
     # 3. Enforce Strict Call Price Monotonicity: -exp(-rT) < dC/dK < 0
     keep_rows = [0]
     dropped_monotonicity = 0
@@ -317,6 +332,16 @@ def clean_and_blend_otm_chain(
             dropped_monotonicity += 1
 
     cleaned = liquid.iloc[keep_rows].copy().reset_index(drop=True)
+    if len(cleaned) < 25 and use_live:
+        return clean_and_blend_otm_chain(
+            ticker=ticker,
+            target_dte=target_dte,
+            risk_free_rate=risk_free_rate,
+            max_rel_spread=max_rel_spread,
+            moneyness_bounds=moneyness_bounds,
+            use_live=False,
+            save_csv_path=save_csv_path,
+        )
     cleaned["moneyness"] = cleaned["strike"] / forward
     cleaned["log_moneyness"] = np.log(cleaned["moneyness"])
 
